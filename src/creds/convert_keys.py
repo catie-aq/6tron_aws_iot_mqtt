@@ -44,5 +44,5 @@ if __name__ == "__main__":
     if not key_found:
         print("No private key found !")
 
-    bin2array("ca_cert", os.path.join(creds_dir, "AmazonRootCA1.pem"),
+    bin2array("ca_cert", os.path.join(creds_dir, "ThingsboardCA.pem"),
               os.path.join(creds_dir, "ca.c"))
