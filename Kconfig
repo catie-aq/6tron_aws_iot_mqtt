@@ -70,7 +70,6 @@ config TB_EXPONENTIAL_BACKOFF
 	default y
 	help
 	  Enable ThingsBoard exponential backoff for reconnecting to ThingsBoard MQTT broker.
-
 endmenu
 
 source "Kconfig.zephyr"

@@ -8,6 +8,7 @@
 #define _AWS_CERTS_H_
 
 #include <stdint.h>
+#include <mbedtls/ssl_ciphersuites.h>
 
 extern const uint8_t ca_cert[];
 extern const uint32_t ca_cert_len;
