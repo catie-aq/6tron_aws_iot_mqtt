@@ -104,55 +104,45 @@ static int publish_message(const char *topic, size_t topic_len,
 }
 
 static ssize_t handle_published_message(const struct mqtt_publish_param *pub) {
-    int ret;
-    size_t received = 0u;
-    const size_t message_size = pub->message.payload.len;
-    const bool discarded = message_size > APP_BUFFER_SIZE;
+  int ret;
+  size_t received = 0u;
+  const size_t message_size = pub->message.payload.len;
+  const bool discarded = message_size > APP_BUFFER_SIZE;
 
-    LOG_INF("RECEIVED on topic \"%s\" [ id: %u qos: %u ] payload: %zu / %u B",
-            (const char *)pub->message.topic.topic.utf8, pub->message_id,
-            pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
+  LOG_INF("RECEIVED on topic \"%s\" [ id: %u qos: %u ] payload: %u / %u B",
+          (const char *)pub->message.topic.topic.utf8, pub->message_id,
+          pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
 
-    while (received < message_size) {
-        uint8_t *p = discarded ? buffer : &buffer[received];
+  while (received < message_size) {
+    uint8_t *p = discarded ? buffer : &buffer[received];
 
-        ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
-        if (ret < 0) {
-            return ret;
-        }
-
-        received += ret;
+    ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
+    if (ret < 0) {
+      return ret;
     }
 
-    if (!discarded) {
-        LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
+    received += ret;
+  }
 
-        if (strcmp(pub->message.topic.topic.utf8, "v1/devices/me/attributes/response") == 0) {
-            handle_firmware_info(buffer, message_size);
-        } else {
-            int chunk_num;
-            sscanf(pub->message.topic.topic.utf8, "v2/fw/response/%d/chunk/%d", &firmware_request_id, &chunk_num);
-            process_firmware_chunk(buffer, message_size, chunk_num);
+  if (!discarded) {
+    LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
+  }
 
-            if (chunk_num + 1 < chunk_count) {
-                get_firmware(chunk_num + 1);
-            }
-        }
-    }
+  /* Send ACK */
+  switch (pub->message.topic.qos) {
+  case MQTT_QOS_1_AT_LEAST_ONCE: {
+    struct mqtt_puback_param puback;
 
-    switch (pub->message.topic.qos) {
-    case MQTT_QOS_1_AT_LEAST_ONCE: {
-        struct mqtt_puback_param puback;
-        puback.message_id = pub->message_id;
-        mqtt_publish_qos1_ack(&client_ctx, &puback);
-    } break;
-    case MQTT_QOS_2_EXACTLY_ONCE:
-    case MQTT_QOS_0_AT_MOST_ONCE:
-    default:
-        break;
-    }
+    puback.message_id = pub->message_id;
+    mqtt_publish_qos1_ack(&client_ctx, &puback);
+  } break;
+  case MQTT_QOS_2_EXACTLY_ONCE: /* unhandled (not supported by AWS) */
+  case MQTT_QOS_0_AT_MOST_ONCE: /* nothing to do */
+  default:
+    break;
+  }
 
-    return discarded ? -ENOMEM : received;
+  return discarded ? -ENOMEM : received;
 }
 
 const char *mqtt_evt_type_to_str(enum mqtt_evt_type type) {

@@ -17,13 +17,18 @@ extern int firmware_request_id;
 extern int chunk_count;
 extern int firmware_chunk_size;
 
-void request_firmware_info(void);
+static char current_firmware_version[24]; 
+static char current_firmware_title[64];   
+
+int request_firmware_info();
 void handle_firmware_info(const uint8_t *data, size_t len);
 void process_firmware_chunk(const uint8_t *data, size_t len, int chunk_num);
-void get_firmware(int chunk_number); // Add this line
+int get_firmware(int chunk_number); // Add this line
 int update_request_topic_name(char *topic_name, int chunk_number);
 int send_message(char *topic, char *payload);
+char *current_firmware_to_json();
+int store_firmware_chunk(void *payload, int chunk_number, int chunk_len);
 
-
+int on_connect();
 
 #endif // MQTT_FIRMWARE_UPDATE_H
