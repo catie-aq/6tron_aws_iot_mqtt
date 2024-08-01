@@ -28,9 +28,8 @@ int update_request_topic_name(char *topic_name, int chunk_number);
 int send_message(char *topic, char *payload);
 char *current_firmware_to_json();
 int store_firmware_chunk(void *payload, int chunk_number, int chunk_len);
+ssize_t process_message(const struct mqtt_publish_param *pub);
 
 int on_connect();
-
-static ssize_t process_message(const struct mqtt_publish_param *pub);
 
 #endif // MQTT_FIRMWARE_UPDATE_H

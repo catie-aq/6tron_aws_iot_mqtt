@@ -240,7 +240,7 @@ void handle_firmware_info(const uint8_t *payload, size_t payload_len) {
 }
 
 
-static ssize_t process_message(const struct mqtt_publish_param *pub) {
+ssize_t process_message(const struct mqtt_publish_param *pub) {
     char update_response_topic[256];
     update_response_topic_name(update_response_topic);
 
@@ -303,16 +303,6 @@ static ssize_t process_message(const struct mqtt_publish_param *pub) {
             get_firmware(chunk_number + 1);
         } else {
             printf("Firmware download completed\n");
-
-            // Deinit secondary block device
-            //secondary_bd->deinit();
-
-            int ret = boot_set_pending(false);
-            if (ret == 0) {
-                printf("> Secondary image pending, reboot to update\n");
-            } else {
-                printf("Failed to set secondary image pending: %d\n", ret);
-            }
         }
     }
 
