@@ -12,10 +12,18 @@ struct firmware_info {
     int size;
 };
 
+extern struct mqtt_client client_ctx;
+extern int firmware_request_id;
+extern int chunk_count;
+extern int firmware_chunk_size;
 
 void request_firmware_info(void);
 void handle_firmware_info(const uint8_t *data, size_t len);
 void process_firmware_chunk(const uint8_t *data, size_t len, int chunk_num);
-void get_firmware_chunk(int chunk_num);
+void get_firmware(int chunk_number); // Add this line
+int update_request_topic_name(char *topic_name, int chunk_number);
+int send_message(char *topic, char *payload);
+
+
 
 #endif // MQTT_FIRMWARE_UPDATE_H

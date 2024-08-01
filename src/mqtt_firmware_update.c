@@ -1,17 +1,15 @@
 #include "mqtt_firmware_update.h"
-#include <zephyr/net/mqtt.h>
-#include <zephyr/random/random.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr/data/json.h>
 #include <zephyr/logging/log.h>
-
+#include <zephyr/net/mqtt.h>
+#include <zephyr/random/random.h>
 
 struct mqtt_client client_ctx;
-
 int firmware_request_id = 10;
-int chunk_count = 0; // number of chunks to download
+int chunk_count = 0;            // number of chunks to download
 int firmware_chunk_size = 4096; // define firmware_chunk_size
 
 LOG_MODULE_DECLARE(tb);
@@ -35,7 +33,24 @@ void handle_firmware_info(const uint8_t *payload, size_t payload_len) {
     LOG_INF("Firmware size: %d", firmware_info.size);
 
     chunk_count = (firmware_info.size + firmware_chunk_size - 1) / firmware_chunk_size;
-    get_firmware_chunk(0);
+
+    // Prepare the topic and payload for the first chunk request
+    static char update_request_topic[256];
+    update_request_topic_name(update_request_topic, 0);
+
+    static char chunk_payload[100];
+    sprintf(chunk_payload, "%d", firmware_chunk_size);
+
+    send_message(update_request_topic, chunk_payload);
+}
+
+int update_request_topic_name(char *topic_name, int chunk_number) {
+    sprintf(topic_name, "v2/fw/request/%d/chunk/%d", firmware_request_id, chunk_number);
+    return 0;
+}
+
+int send_telemetry(char *payload) {
+    return send_message((char *)"v1/devices/me/telemetry", payload);
 }
 
 void process_firmware_chunk(const uint8_t *chunk, size_t chunk_size, int chunk_num) {
@@ -63,19 +78,31 @@ void request_firmware_info(void) {
     }
 }
 
-void get_firmware_chunk(int chunk_num) {
-    char topic[64];
-    snprintf(topic, sizeof(topic), "v2/fw/request/%d/chunk/%d", firmware_request_id, chunk_num);
-
+int send_message(char *topic, char *payload) {
     struct mqtt_publish_param param;
     param.message.topic.qos = MQTT_QOS_1_AT_LEAST_ONCE;
     param.message.topic.topic.utf8 = topic;
     param.message.topic.topic.size = strlen(topic);
-    param.message.payload.data = NULL;
-    param.message.payload.len = 0;
+    param.message.payload.data = payload;
+    param.message.payload.len = strlen(payload);
     param.message_id = sys_rand32_get();
     param.dup_flag = 0;
     param.retain_flag = 0;
 
-    mqtt_publish(&client_ctx, &param);
+    int ret = mqtt_publish(&client_ctx, &param);
+    if (ret) {
+        LOG_ERR("Failed to publish: %d", ret);
+    }
+
+    return ret;
+}
+
+void get_firmware(int chunk_number) {
+    static char update_request_topic[256];
+    update_request_topic_name(update_request_topic, chunk_number);
+
+    static char payload[100];
+    sprintf(payload, "%d", firmware_chunk_size);
+
+    send_message(update_request_topic, payload);
 }

@@ -135,7 +135,7 @@ static ssize_t handle_published_message(const struct mqtt_publish_param *pub) {
             process_firmware_chunk(buffer, message_size, chunk_num);
 
             if (chunk_num + 1 < chunk_count) {
-                get_firmware_chunk(chunk_num + 1);
+                get_firmware(chunk_num + 1);
             }
         }
     }
