@@ -31,4 +31,6 @@ int store_firmware_chunk(void *payload, int chunk_number, int chunk_len);
 
 int on_connect();
 
+static ssize_t process_message(const struct mqtt_publish_param *pub);
+
 #endif // MQTT_FIRMWARE_UPDATE_H

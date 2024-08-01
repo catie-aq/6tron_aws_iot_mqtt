@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/data/json.h>
 #include <zephyr/logging/log.h>
@@ -23,7 +24,6 @@ LOG_MODULE_REGISTER(tb, LOG_LEVEL_DBG);
 
 #define SNTP_SERVER "0.pool.ntp.org"
 #define TB_BROKER_PORT "8883"
-
 
 #define MQTT_BUFFER_SIZE 256u
 #define APP_BUFFER_SIZE 4096u
@@ -55,11 +55,20 @@ static const sec_tag_t sec_tls_tags[] = {
 
 static int subscribe_to_topics(void) {
     int ret;
-    struct mqtt_topic topics[] = {{
-        .topic = {.utf8 = CONFIG_TB_SUBSCRIBE_TOPIC,
-                  .size = strlen(CONFIG_TB_SUBSCRIBE_TOPIC)},
-        .qos = CONFIG_TB_QOS,
-    }};
+    struct mqtt_topic topics[] = {
+        {.topic = {.utf8 = CONFIG_TB_SUBSCRIBE_TOPIC,
+                   .size = strlen(CONFIG_TB_SUBSCRIBE_TOPIC)},
+         .qos = MQTT_QOS_1_AT_LEAST_ONCE},
+        {.topic = {.utf8 = "v1/devices/me/attributes/response/+",
+                   .size = strlen("v1/devices/me/attributes/response/+")},
+         .qos = MQTT_QOS_1_AT_LEAST_ONCE},
+        {.topic = {.utf8 = "v2/fw/response/+",
+                   .size = strlen("v2/fw/response/+")},
+         .qos = MQTT_QOS_1_AT_LEAST_ONCE},
+        {.topic = {.utf8 = "v2/fw/response/+/chunk/+",
+                   .size = strlen("v2/fw/response/+/chunk/+")},
+         .qos = MQTT_QOS_1_AT_LEAST_ONCE}
+    };
     const struct mqtt_subscription_list sub_list = {
         .list = topics,
         .list_count = ARRAY_SIZE(topics),
@@ -86,7 +95,7 @@ static int publish_message(const char *topic, size_t topic_len,
     msg.retain_flag = 0u;
     msg.message.topic.topic.utf8 = topic;
     msg.message.topic.topic.size = topic_len;
-    msg.message.topic.qos = CONFIG_TB_QOS;
+    msg.message.topic.qos = MQTT_QOS_1_AT_LEAST_ONCE;
     msg.message.payload.data = payload;
     msg.message.payload.len = payload_len;
     msg.message_id = message_id++;
@@ -104,45 +113,48 @@ static int publish_message(const char *topic, size_t topic_len,
 }
 
 static ssize_t handle_published_message(const struct mqtt_publish_param *pub) {
-  int ret;
-  size_t received = 0u;
-  const size_t message_size = pub->message.payload.len;
-  const bool discarded = message_size > APP_BUFFER_SIZE;
+    int ret;
+    size_t received = 0u;
+    const size_t message_size = pub->message.payload.len;
+    const bool discarded = message_size > APP_BUFFER_SIZE;
 
-  LOG_INF("RECEIVED on topic \"%s\" [ id: %u qos: %u ] payload: %u / %u B",
-          (const char *)pub->message.topic.topic.utf8, pub->message_id,
-          pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
+    LOG_INF("RECEIVED on topic \"%s\" [ id: %u qos: %u ] payload: %u / %u B",
+            (const char *)pub->message.topic.topic.utf8, pub->message_id,
+            pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
 
-  while (received < message_size) {
-    uint8_t *p = discarded ? buffer : &buffer[received];
+    while (received < message_size) {
+        uint8_t *p = discarded ? buffer : &buffer[received];
 
-    ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
-    if (ret < 0) {
-      return ret;
+        ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
+        if (ret < 0) {
+            return ret;
+        }
+
+        received += ret;
     }
 
-    received += ret;
-  }
+    if (!discarded) {
+        LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
+    }
 
-  if (!discarded) {
-    LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
-  }
+    /* Process the message */
+    process_message(pub);
 
-  /* Send ACK */
-  switch (pub->message.topic.qos) {
-  case MQTT_QOS_1_AT_LEAST_ONCE: {
-    struct mqtt_puback_param puback;
+    /* Send ACK */
+    switch (pub->message.topic.qos) {
+        case MQTT_QOS_1_AT_LEAST_ONCE: {
+            struct mqtt_puback_param puback;
 
-    puback.message_id = pub->message_id;
-    mqtt_publish_qos1_ack(&client_ctx, &puback);
-  } break;
-  case MQTT_QOS_2_EXACTLY_ONCE: /* unhandled (not supported by AWS) */
-  case MQTT_QOS_0_AT_MOST_ONCE: /* nothing to do */
-  default:
-    break;
-  }
+            puback.message_id = pub->message_id;
+            mqtt_publish_qos1_ack(&client_ctx, &puback);
+        } break;
+        case MQTT_QOS_2_EXACTLY_ONCE: /* unhandled (not supported by AWS) */
+        case MQTT_QOS_0_AT_MOST_ONCE: /* nothing to do */
+        default:
+            break;
+    }
 
-  return discarded ? -ENOMEM : received;
+    return discarded ? -ENOMEM : received;
 }
 
 const char *mqtt_evt_type_to_str(enum mqtt_evt_type type) {
@@ -160,31 +172,31 @@ static void mqtt_event_cb(struct mqtt_client *client,
             evt->type, evt->result);
 
     switch (evt->type) {
-    case MQTT_EVT_CONNACK: {
-        do_subscribe = true;
-    } break;
+        case MQTT_EVT_CONNACK: {
+            do_subscribe = true;
+        } break;
 
-    case MQTT_EVT_PUBLISH: {
-        const struct mqtt_publish_param *pub = &evt->param.publish;
+        case MQTT_EVT_PUBLISH: {
+            const struct mqtt_publish_param *pub = &evt->param.publish;
 
-        handle_published_message(pub);
-        messages_received_counter++;
-        do_publish = true;
-    } break;
+            handle_published_message(pub);
+            messages_received_counter++;
+            do_publish = true;
+        } break;
 
-    case MQTT_EVT_SUBACK: {
-        do_publish = true;
-    } break;
+        case MQTT_EVT_SUBACK: {
+            do_publish = true;
+        } break;
 
-    case MQTT_EVT_PUBACK:
-    case MQTT_EVT_DISCONNECT:
-    case MQTT_EVT_PUBREC:
-    case MQTT_EVT_PUBREL:
-    case MQTT_EVT_PUBCOMP:
-    case MQTT_EVT_PINGRESP:
-    case MQTT_EVT_UNSUBACK:
-    default:
-        break;
+        case MQTT_EVT_PUBACK:
+        case MQTT_EVT_DISCONNECT:
+        case MQTT_EVT_PUBREC:
+        case MQTT_EVT_PUBREL:
+        case MQTT_EVT_PUBCOMP:
+        case MQTT_EVT_PINGRESP:
+        case MQTT_EVT_UNSUBACK:
+        default:
+            break;
     }
 }
 
