@@ -15,7 +15,9 @@ struct firmware_info {
 extern struct mqtt_client client_ctx;
 extern int firmware_request_id;
 extern int chunk_count;
+extern int chunk_number;
 extern int firmware_chunk_size;
+extern bool do_firmware_update;
 
 static char current_firmware_version[24]; 
 static char current_firmware_title[64];   
@@ -28,7 +30,7 @@ int update_request_topic_name(char *topic_name, int chunk_number);
 int send_message(char *topic, char *payload);
 char *current_firmware_to_json();
 int store_firmware_chunk(void *payload, int chunk_number, int chunk_len);
-ssize_t process_message(const struct mqtt_publish_param *pub);
+ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, size_t buff_len);
 
 int on_connect();
 

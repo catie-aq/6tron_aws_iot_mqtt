@@ -122,7 +122,7 @@ static ssize_t handle_published_message(const struct mqtt_publish_param *pub) {
             (const char *)pub->message.topic.topic.utf8, pub->message_id,
             pub->message.topic.qos, message_size, APP_BUFFER_SIZE);
 
-    while (received < message_size) {
+     while (received < message_size) {
         uint8_t *p = discarded ? buffer : &buffer[received];
 
         ret = mqtt_read_publish_payload_blocking(&client_ctx, p, APP_BUFFER_SIZE);
@@ -130,31 +130,14 @@ static ssize_t handle_published_message(const struct mqtt_publish_param *pub) {
             return ret;
         }
 
-        received += ret;
+        received += ret;    
     }
+   
+    LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
 
-    if (!discarded) {
-        LOG_HEXDUMP_DBG(buffer, MIN(message_size, 256u), "Received payload:");
-    }
-
-    /* Process the message */
-    process_message(pub);
-
-    /* Send ACK */
-    switch (pub->message.topic.qos) {
-        case MQTT_QOS_1_AT_LEAST_ONCE: {
-            struct mqtt_puback_param puback;
-
-            puback.message_id = pub->message_id;
-            mqtt_publish_qos1_ack(&client_ctx, &puback);
-        } break;
-        case MQTT_QOS_2_EXACTLY_ONCE: /* unhandled (not supported by AWS) */
-        case MQTT_QOS_0_AT_MOST_ONCE: /* nothing to do */
-        default:
-            break;
-    }
-
-    return discarded ? -ENOMEM : received;
+    process_message(pub, buffer, message_size);
+    
+    return 0;
 }
 
 const char *mqtt_evt_type_to_str(enum mqtt_evt_type type) {
@@ -342,6 +325,11 @@ void tb_client_loop(void) {
             subscribe_to_topics();
             request_firmware_info();
         }
+
+        // if (do_firmware_update) {
+        //     do_firmware_update = false;
+        //     get_firmware(chunk_number);
+        // }
     }
 
 cleanup:
