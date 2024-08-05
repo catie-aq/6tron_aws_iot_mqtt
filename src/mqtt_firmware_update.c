@@ -12,13 +12,13 @@ struct mqtt_client client_ctx;
 int firmware_request_id = 10;
 int chunk_count = 0;
 int chunk_number = 0;
-int firmware_chunk_size = 3200;
+int firmware_chunk_size = 256;
 struct json_key_value {
   char value[128];
 };
 bool do_firmware_update = false;
 
-LOG_MODULE_DECLARE(tb);
+LOG_MODULE_DECLARE(tb, LOG_LEVEL_INF);
 
 char *current_firmware_to_json() {
   static char firmware_infos[96];
@@ -234,6 +234,7 @@ void handle_firmware_info(const uint8_t *payload, size_t payload_len) {
 
     chunk_count = (size + firmware_chunk_size - 1) / firmware_chunk_size;
     LOG_INF("Chunk count: %d", chunk_count);
+    printf("chunk_count: %d\n", chunk_count);
 
   } else {
     LOG_INF("Firmware version is up to date: %s", version);
@@ -252,9 +253,10 @@ ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, siz
       strncmp(pub->message.topic.topic.utf8, "v1/devices/me/attributes", 24)) {
     // check if topic contains "response"
     if (strstr(pub->message.topic.topic.utf8, "/response/") != NULL) {
-      // put \0 at the end of the message payload
-      ((char *)pub->message.payload.data)[pub->message.payload.len] = '\0';
-      printf("Payload: %s\n", (char *)pub->message.payload.data);
+     
+      //print buff, size_t buff_len
+      printf("Payload: %s\n", buff);
+      printf("Payload length: %d\n", buff_len );  
 
       // get firmware version
       static char version[100];
@@ -265,6 +267,8 @@ ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, siz
       static char title[100];
       extract_string((char *)pub->message.payload.data,
                      (char *)"shared.fw_title", title);
+      printf("Firmware title: %s\n", title);
+      printf("Firmware version: %s\n", version);
 
       // if version or title is different from current version, update
       if (strcmp(version, current_firmware_version) != 0) {
