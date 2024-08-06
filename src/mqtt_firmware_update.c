@@ -242,97 +242,62 @@ void handle_firmware_info(const uint8_t *payload, size_t payload_len) {
 }
 
 ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, size_t buff_len) {
-  char update_response_topic[256];
-  update_response_topic_name(update_response_topic);
+    char update_response_topic[256];
+    update_response_topic_name(update_response_topic);
 
-  printf("Message arrived on topic %.*s\n", pub->message.topic.topic.size,
-         pub->message.topic.topic.utf8);
+    LOG_INF("Message arrived on topic %.*s", pub->message.topic.topic.size, pub->message.topic.topic.utf8);
 
-  // Test if topic starts with v1/devices/me/attributes
-  if (0 ==
-      strncmp(pub->message.topic.topic.utf8, "v1/devices/me/attributes", 24)) {
-    // check if topic contains "response"
-    if (strstr(pub->message.topic.topic.utf8, "/response/") != NULL) {
-     
-      //print buff, size_t buff_len
-      printf("Payload: %s\n", buff);
-      printf("Payload length: %d\n", buff_len );  
+    if (0 == strncmp(pub->message.topic.topic.utf8, "v1/devices/me/attributes", 24)) {
+        if (strstr(pub->message.topic.topic.utf8, "/response/") != NULL) {
+            LOG_INF("Payload: %s", buff);
+            LOG_INF("Payload length: %d", buff_len);
 
-      // get firmware version
-      static char version[100];
-      extract_string((char *)pub->message.payload.data,
-                     (char *)"shared.fw_version", version);
+            static char version[100];
+            extract_string((const char *)buff, "fw_version", version);
 
-      // get firmware title
-      static char title[100];
-      extract_string((char *)pub->message.payload.data,
-                     (char *)"shared.fw_title", title);
-      printf("Firmware title: %s\n", title);
-      printf("Firmware version: %s\n", version);
+            static char title[100];
+            extract_string((const char *)buff, "fw_title", title);
+            LOG_INF("Firmware title: %s", title);
+            LOG_INF("Firmware version: %s", version);
 
-      // if version or title is different from current version, update
-      if (strcmp(version, current_firmware_version) != 0) {
-        printf("New firmware version available: %s - %s\n", title, version);
-        char telemetry_payload[200];
-        sprintf(
-            telemetry_payload,
-            "{\"fw_state\" :\"DOWNLOADING\", \"current_fw_version\":\"%s\", "
-            "\"current_fw_title\":\"%s\"}",
-            current_firmware_version, current_firmware_title);
-        send_telemetry(telemetry_payload);
-        k_sleep(K_SECONDS(1));
+            if (strcmp(version, current_firmware_version) != 0) {
+                LOG_INF("New firmware version available: %s - %s", title, version);
+                char telemetry_payload[200];
+                snprintf(telemetry_payload, sizeof(telemetry_payload),
+                         "{\"fw_state\" :\"DOWNLOADING\", \"current_fw_version\":\"%s\", \"current_fw_title\":\"%s\"}",
+                         current_firmware_version, current_firmware_title);
+                send_telemetry(telemetry_payload);
+                k_sleep(K_SECONDS(1));
 
-        firmware_request_id++;
+                firmware_request_id++;
 
-        int firmware_size = 0;
-        extract_number((char *)pub->message.payload.data,
-                       (char *)"shared.fw_size", &firmware_size);
-        printf("Firmware size: %d\n", firmware_size);
+                int firmware_size = 0;
+                extract_number((const char *)buff, "fw_size", &firmware_size);
+                LOG_INF("Firmware size: %d", firmware_size);
 
-        chunk_count =
-            (firmware_size + firmware_chunk_size - 1) / firmware_chunk_size;
-        printf("Chunk count: %d\n", chunk_count);
+                chunk_count = (firmware_size + firmware_chunk_size - 1) / firmware_chunk_size;
+                LOG_INF("Chunk count: %d", chunk_count);
 
-        // Assuming secondary_bd is initialized elsewhere
-        /* if (secondary_bd->init() != 0) {
-             printf("Init failed\n");
-         }*/
+                get_firmware(0);
+            } else {
+                get_firmware(0);
+                LOG_INF("Firmware version is up to date: %s", version);
+            }
+        }
+    } else if (0 == strncmp(pub->message.topic.topic.utf8, update_response_topic, strlen(update_response_topic))) {
+        LOG_INF("\n\nFirmware Chunk received!\n\n");
 
-        get_firmware(0);
-      } else {
-        // force start update
-        get_firmware(0);
-        printf("Firmware version is up to date: %s\n", version);
-      }
+        sscanf(pub->message.topic.topic.utf8, "v2/fw/response/%d/chunk/%d", &firmware_request_id, &chunk_number);
+
+        store_firmware_chunk(buff, chunk_number, buff_len);
+
+        if (chunk_number >= 10) {
+            LOG_INF("Firmware download completed");
+        } else {
+            chunk_number++;
+            get_firmware(chunk_number);
+        }
     }
-  } else if (0 == strncmp(pub->message.topic.topic.utf8, update_response_topic,
-                          strlen(update_response_topic))) {
-    printf("\n\nFirmware Chunk received!\n\n");
-    
-    sscanf(pub->message.topic.topic.utf8, "v2/fw/response/%d/chunk/%d",
-           &firmware_request_id, &chunk_number);
-    
-    store_firmware_chunk(buff, chunk_number,
-                         buff_len);
 
-   
-    // TODO: use fw info to determine if firmware download is complete
-    if (chunk_number >= 10) {
-       printf("Firmware download completed\n");
-    } else {
-       chunk_number++;
-      get_firmware(chunk_number);
-    }      
-
-    
-    // if (chunk_number < chunk_count - 1) {
-    //       do_firmware_update = true;    
-    //   } else {
-    //       do_firmware_update = false;
-    //       printf("Firmware download completed\n");
-    //   }
-
-  }
-
-  return 0; // Adjust return value as needed
+    return 0; // Adjust return value as needed
 }
