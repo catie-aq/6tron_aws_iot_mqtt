@@ -15,74 +15,93 @@ int firmware_chunk_size = 256;
 
 bool do_firmware_update = false;
 
-LOG_MODULE_DECLARE(tb, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(tb, LOG_LEVEL_INF);
+
+struct shared_info {
+    const char *fw_checksum;
+    int fw_size;
+    const char *fw_title;
+    const char *fw_checksum_algorithm;
+    const char *fw_version;
+};
 
 struct firmware_info {
-    int fw_size;
-    char fw_title[128];
-    char fw_version[16];
+    struct shared_info shared;
+};
+
+static const struct json_obj_descr shared_info_descr[] = {
+    JSON_OBJ_DESCR_PRIM(struct shared_info, fw_checksum, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct shared_info, fw_size, JSON_TOK_NUMBER),
+    JSON_OBJ_DESCR_PRIM(struct shared_info, fw_title, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct shared_info, fw_checksum_algorithm, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct shared_info, fw_version, JSON_TOK_STRING),
 };
 
 static const struct json_obj_descr firmware_info_descr[] = {
-    JSON_OBJ_DESCR_PRIM(struct firmware_info, fw_size, JSON_TOK_NUMBER),
-    JSON_OBJ_DESCR_PRIM(struct firmware_info, fw_title, JSON_TOK_STRING),
-    JSON_OBJ_DESCR_PRIM(struct firmware_info, fw_version, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_OBJECT(struct firmware_info, shared, shared_info_descr),
 };
 
-int extract_string(const char *json, const char *key, char *value) {
-    struct firmware_info info;
-    int ret = json_obj_parse((char *)json, strlen(json), firmware_info_descr, ARRAY_SIZE(firmware_info_descr), &info);
+int parse_firmware_info(const char *json, struct firmware_info *info) {
+    int ret = json_obj_parse(json, strlen(json), firmware_info_descr, ARRAY_SIZE(firmware_info_descr), info);
     if (ret < 0) {
-        LOG_ERR("Failed to parse JSON: %d", ret);
+        LOG_ERR("JSON Parse Error: %d", ret);
         return ret;
     }
-
-    if (strcmp(key, "fw_title") == 0) {
-        strcpy(value, info.fw_title);
-    } else if (strcmp(key, "fw_version") == 0) {
-        strcpy(value, info.fw_version);
-    } else {
-        LOG_ERR("Key not found");
-        return -1;
-    }
-
     return 0;
 }
 
-int extract_number(const char *json, const char *key, int *value) {
+void process_firmware_info(const char *json_payload) {
     struct firmware_info info;
-    int ret = json_obj_parse((char *)json, strlen(json), firmware_info_descr, ARRAY_SIZE(firmware_info_descr), &info);
-    if (ret < 0) {
-        LOG_ERR("Failed to parse JSON: %d", ret);
-        return ret;
-    }
 
-    if (strcmp(key, "fw_size") == 0) {
-        *value = info.fw_size;
+    //const char *test_payload = "{\"shared\":{\"fw_checksum\":\"dummy_checksum\",\"fw_size\":12345,\"fw_title\":\"TEST_TITLE\",\"fw_checksum_algorithm\":\"SHA256\",\"fw_version\":\"TEST_VERSION\"}}";
+    //printf("Test payload: %s\n", test_payload);
+
+    if (parse_firmware_info(json_payload, &info) == 0) {
+        LOG_INF("Firmware title: %s", info.shared.fw_title);
+        LOG_INF("Firmware version: %s", info.shared.fw_version);
+        LOG_INF("Firmware size: %d", info.shared.fw_size);
+        
+        // Check if new firmware is available
+        if (strcmp(info.shared.fw_version, current_firmware_version) != 0) {
+            LOG_INF("New firmware version available: %s - %s", info.shared.fw_title, info.shared.fw_version);
+            char telemetry_payload[200];
+            snprintf(telemetry_payload, sizeof(telemetry_payload),
+                     "{\"fw_state\" :\"DOWNLOADING\", \"current_fw_version\":\"%s\", "
+                     "\"current_fw_title\":\"%s\"}",
+                     current_firmware_version, current_firmware_title);
+            send_telemetry(telemetry_payload);
+            k_sleep(K_SECONDS(1));
+
+            firmware_request_id++;
+
+            chunk_count = (info.shared.fw_size + firmware_chunk_size - 1) / firmware_chunk_size;
+            LOG_INF("Chunk count: %d", chunk_count);
+
+            get_firmware(0);
+        } else {
+            LOG_INF("Firmware version is up to date: %s", info.shared.fw_version);
+        }
     } else {
-        LOG_ERR("Key not found");
-        return -1;
+        LOG_ERR("Failed to parse firmware info.");
     }
-
-    return 0;
 }
 
 char *current_firmware_to_json() {
-    static char firmware_infos[96];
-    sprintf(firmware_infos,
-            "{\"current_fw_title\":\"%s\",\"current_fw_version\":\"%s\"}",
-            current_firmware_title, current_firmware_version);
+    static char firmware_infos[256];
+    snprintf(firmware_infos, sizeof(firmware_infos),
+             "{\"current_fw_title\":\"%s\",\"current_fw_version\":\"%s\"}",
+             current_firmware_title, current_firmware_version);
     return firmware_infos;
 }
 
 int update_response_topic_name(char *topic_name) {
-    sprintf(topic_name, "v2/fw/response/%d/chunk/", firmware_request_id);
+    snprintf(topic_name, 256, "v2/fw/response/%d/chunk/", firmware_request_id);
     return 0;
 }
 
 int update_request_topic_name(char *topic_name, int chunk_number) {
-    sprintf(topic_name, "v2/fw/request/%d/chunk/%d", firmware_request_id,
-            chunk_number);
+    snprintf(topic_name, 256, "v2/fw/request/%d/chunk/%d", firmware_request_id,
+             chunk_number);
     return 0;
 }
 
@@ -119,7 +138,8 @@ int store_firmware_chunk(void *payload, int chunk_number, int chunk_len) {
 int request_firmware_info() {
     LOG_INF("Requesting firmware info");
     char topic[100];
-    sprintf(topic, "v1/devices/me/attributes/request/%d", firmware_request_id);
+    snprintf(topic, sizeof(topic), "v1/devices/me/attributes/request/%d",
+             firmware_request_id);
     char keys[] = "{\"sharedKeys\" : "
                   "\"fw_checksum,fw_checksum_algorithm,fw_size,fw_title,fw_"
                   "version,fw_state\"}";
@@ -151,7 +171,7 @@ int get_firmware(int chunk_number) {
         return ret;
     }
     static char payload[100];
-    sprintf(payload, "%d", firmware_chunk_size);
+    snprintf(payload, sizeof(payload), "%d", firmware_chunk_size);
     send_message(update_request_topic, payload);
 
     return 0;
@@ -211,61 +231,18 @@ int on_connect() {
 
 ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, size_t buff_len) {
     char update_response_topic[256];
-    update_response_topic_name(update_response_topic);
+    snprintf(update_response_topic, sizeof(update_response_topic), "v2/fw/response/%d/chunk/", firmware_request_id);
 
     LOG_INF("Message arrived on topic %.*s", pub->message.topic.topic.size, pub->message.topic.topic.utf8);
 
     if (0 == strncmp(pub->message.topic.topic.utf8, "v1/devices/me/attributes", 24)) {
         if (strstr(pub->message.topic.topic.utf8, "/response/") != NULL) {
-            /* Place null terminator at end of payload buffer */
             buff[buff_len] = '\0';
 
-            LOG_INF("Payload: %.*s", (int)buff_len, buff);
-            LOG_INF("Payload length: %zu", buff_len);
+            LOG_INF("Payload: %s", buff);
+            LOG_INF("Payload length: %d", buff_len);
 
-            char title[128];
-            char version[16];
-            int size;
-
-            if (extract_string((const char *)buff, "fw_title", title) < 0) {
-                LOG_ERR("Failed to extract firmware title");
-                return -1;
-            }
-
-            if (extract_string((const char *)buff, "fw_version", version) < 0) {
-                LOG_ERR("Failed to extract firmware version");
-                return -1;
-            }
-
-            if (extract_number((const char *)buff, "fw_size", &size) < 0) {
-                LOG_ERR("Failed to extract firmware size");
-                return -1;
-            }
-
-            LOG_INF("Firmware title: %s", title);
-            LOG_INF("Firmware version: %s", version);
-            LOG_INF("Firmware size: %d", size);
-
-            if (strcmp(version, current_firmware_version) != 0) {
-                LOG_INF("New firmware version available: %s - %s", title, version);
-                char telemetry_payload[200];
-                snprintf(telemetry_payload, sizeof(telemetry_payload),
-                         "{\"fw_state\" :\"DOWNLOADING\", \"current_fw_version\":\"%s\", "
-                         "\"current_fw_title\":\"%s\"}",
-                         current_firmware_version, current_firmware_title);
-                send_telemetry(telemetry_payload);
-                k_sleep(K_SECONDS(1));
-
-                firmware_request_id++;
-
-                chunk_count = (size + firmware_chunk_size - 1) / firmware_chunk_size;
-                LOG_INF("Chunk count: %d", chunk_count);
-                LOG_INF("chunk_count: %d", chunk_count);
-
-                get_firmware(0);
-            } else {
-                LOG_INF("Firmware version is up to date: %s", version);
-            }
+            process_firmware_info((const char *)buff);  // Use the test payload inside the function
         }
     } else if (0 == strncmp(pub->message.topic.topic.utf8, update_response_topic, strlen(update_response_topic))) {
         LOG_INF("\n\nFirmware Chunk received!\n\n");
@@ -274,7 +251,7 @@ ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, siz
 
         store_firmware_chunk(buff, chunk_number, buff_len);
 
-        if (chunk_number >= 10) {
+        if (chunk_number >= chunk_count) {
             LOG_INF("Firmware download completed");
         } else {
             chunk_number++;
@@ -282,5 +259,5 @@ ssize_t process_message(const struct mqtt_publish_param *pub, uint8_t *buff, siz
         }
     }
 
-    return 0; // Adjust return value as needed
+    return 0;
 }
