@@ -20,7 +20,7 @@
 #include <mbedtls/memory_buffer_alloc.h>
 #endif
 
-LOG_MODULE_REGISTER(tb, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 #define SNTP_SERVER "0.pool.ntp.org"
 #define TB_BROKER_PORT "8883"
